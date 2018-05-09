@@ -2324,6 +2324,26 @@ let write_pdf ?(encryption = None) ?(is_decompress=false) mk_id pdf =
             with
               End_of_file -> flush stdout (*r For Windows *)
 
+let process_string s =
+  let rec replace c cs = function
+    | [] -> []
+    | h::t when h = c -> cs @ replace c cs t
+    | h::t -> h::replace c cs t
+  in
+    (* Convert to UTF8, raw, or stripped, and escape backslashed and quotation marks *)
+    let codepoints = Pdftext.codepoints_of_pdfdocstring s in
+      let escaped =
+        let bs = int_of_char '\\'
+        and nl = int_of_char '\n'
+        and n = int_of_char 'n'
+        and q = int_of_char '\"' in
+          replace bs [bs; bs] (replace nl [bs; n] (replace q [bs; q] codepoints))
+      in
+        match args.encoding with
+        | Cpdf.UTF8 -> Pdftext.utf8_of_codepoints escaped
+        | Cpdf.Stripped -> implode (map char_of_int (lose (fun x -> x > 127) escaped))
+        | Cpdf.Raw -> s
+
 (* Returns empty string on failure. Should only be used in conjunction with
 split at bookmarks code, so should never fail, by definiton. *)
 let remove_unsafe_characters s =
@@ -2332,7 +2352,7 @@ let remove_unsafe_characters s =
       (function x ->
          match x with
          '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '\"' | '^' | '+' | '=' -> true
-         | x when int_of_char x < 32 || int_of_char x > 126 -> true
+         | x when args.encoding <> Cpdf.UTF8 && (int_of_char x < 32 || int_of_char x > 126) -> true
          | _ -> false)
       (explode s)
   in
@@ -2344,7 +2364,7 @@ let get_bookmark_name pdf marks splitlevel n _ =
   let refnums = Pdf.page_reference_numbers pdf in
   let fastrefnums = hashtable_of_dictionary (combine refnums (indx refnums)) in
   match keep (function m -> n = Pdfpage.pagenumber_of_target ~fastrefnums pdf m.Pdfmarks.target && m.Pdfmarks.level <= splitlevel) marks with
-  | {Pdfmarks.text = title}::_ -> remove_unsafe_characters title
+  | {Pdfmarks.text = title}::_ -> remove_unsafe_characters (process_string title)
   | _ -> ""
 
 (* @F means filename without extension *)
